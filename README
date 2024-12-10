@@ -1,0 +1,53 @@
+This is an example for an externally build toolbox for FAnToM.
+The build needs the directory where FAnToM has been installed to. Because of the special precautions that we have taken,
+the build directory of FAnToM can be used directly here, without the need for an installation.
+
+To build the toolbox, run the following commands (assuming the CWD is the toolbox directory)
+  - mkdir build
+  - cd build
+  - FANTOM_DIR=/path/to/FAnToM/install-dir/or/build-dir cmake ../
+  - make
+
+Put all your plugins in subdirectories of the toolbox directory.
+Plugins need a specific directory layout:
+
+toolbox-dir/
+  - CMakeLists.txt   - the main build script
+  - build            - the build dir
+  - PluginComplex/
+    - CMakeLists.txt
+    - FAnToM-Dependencies.txt
+    - include
+      - Interface.hpp
+    - src/
+      - Interface.cpp
+    - algos/
+      - Algo.cpp
+    - test/
+      - test.cpp
+    - resources
+      - shader.glsl
+  - PluginSimple
+    - Algo.cpp
+
+If your plugin (say PluginComplex) needs additional external libraries, find them in your CMakeLists.txt, declare them as imported targets,
+list them in the PluginComplex_LIBS and call FANTOM_ADD_PLUGIN( PluginComplex ).
+If your plugin does not need any external libraries, you can omit the CMakeLists.txt.
+Dependencies to FAnToM default libraries (DEFAULT/Python, DEFAULT/OpenGL) or FAnToM plugins (e.g., utils/Graphics) can be listed
+in the FAnToM-Dependencies.txt directly.
+Put your public interface in plugin-dir/include, and your resources in plugin/dir/resources.
+In src/ goes the implementation of the public interface and into algos/ goes the fantom::AlgorithmS of this plugin.
+In test/ go all sources for a test binary for this plugin. You can expect catch to be available via <catch/catch.hpp>.
+All of these are optional and can be omitted if not applicable.
+In the special case, that you would only have an algo directory, you can also put the source files directly in plugin-dir/.
+
+If you want to customize the toolbox name (default is "custom") just edit the top-level CMakeLists.txt and change
+the value of FANTOM_TOOLBOX_NAME.
+
+Use
+   make run
+or
+   make debug
+to run/debug your plugin.
+
+When installing the build, the generated plugin libraries and data files are merged directly into the FAnToM directory hierarchy.

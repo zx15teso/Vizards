@@ -1,4 +1,4 @@
-#if 0
+ #if 0
 
 /*Aufgabe 1.2 Unstrukturiertes Gitter
 Im Gegensatz zu strukturierten Gittern muss bei einem unstrukturierten Gitter eigenst ̈andig
@@ -32,87 +32,162 @@ das in der 2. Aufgabe zu erstellende Plugin verwenden.
 
 using namespace fantom;
 
-namespace
-{
-    class UnstructuredGridAlgorithm : public VisAlgorithm
-    {
+namespace {
+    class GenerateUnstructuredGrid : public DataAlgorithm {
     public:
-        struct Options : public VisAlgorithm::Options
-        {
+        struct Options : public DataAlgorithm::Options {
             Options(fantom::Options::Control& control)
-                : VisAlgorithm::Options(control)
-            {
-                add< double >( "GridSize", "The size of the grid", 10.0 );
+                : DataAlgorithm::Options(control) {
             }
         };
 
-        struct VisOutputs : public VisAlgorithm::VisOutputs
-        {
-            VisOutputs(fantom::VisOutputs::Control& control)
-                : VisAlgorithm::VisOutputs(control)
-            {
-                addGraphics( "Grid" );
+        struct Outputs : public DataAlgorithm::DataOutputs {
+            Outputs(Control& control)
+                : DataAlgorithm::DataOutputs(control) {
+                // Die Ausgabe ist ein Gitter, das als DataObject verwendet werden kann
+                add<std::shared_ptr<const Grid<3>>>("Grid");
             }
         };
 
-        UnstructuredGridAlgorithm( InitData& data )
-            : VisAlgorithm( data )
-        {
-        }
+        GenerateUnstructuredGrid(InitData& data)
+            : DataAlgorithm(data) {}
 
-        virtual void execute( const Algorithm::Options& options, const volatile bool& /*abortFlag*/) override
-        {
-            double gridSize = options.get< double >( "GridSize" );
+        virtual void execute(const Algorithm::Options& /*options*/, const volatile bool& /*abortFlag*/) override {
+            // 1. Punkte definieren (gemeinsame Punkte für die Zellen)
+            std::vector<Point3> points = {
+                Point3(0.0, 0.0, 0.0),  // Punkt 0
+                Point3(1.0, 0.0, 0.0),  // Punkt 1
+                Point3(0.5, 1.0, 0.0),  // Punkt 2
+                Point3(0.0, 0.0, 1.0),  // Punkt 3
+                Point3(1.0, 0.0, 1.0),  // Punkt 4
+                Point3(0.5, 1.0, 1.0),  // Punkt 5
+                Point3(-0.5, 0.5, 0.0)  // Punkt 6
+            };
 
-            // Erstellen der Punktliste und Zellen
-            std::vector< Cell::Type > cellTypes;
-            std::vector< Point3 > points;               // Punkte im Gitter
-            std::vector< std::vector< size_t > > cells; // Liste der Zellen
+            // 2. Zellen definieren (Dreieck, Tetraeder und Prisma)
+            std::vector<std::shared_ptr<Cell>> cells;
+            cells.push_back(std::make_shared<Cell>(Cell::Type::TRIANGLE, std::vector<size_t>{0, 1, 2}));
+            cells.push_back(std::make_shared<Cell>(Cell::Type::TETRAHEDRON, std::vector<size_t>{0, 1, 2, 3}));
+            cells.push_back(std::make_shared<Cell>(Cell::Type::PRISM, std::vector<size_t>{0, 1, 2, 3, 4, 5}));
+            cells.push_back(std::make_shared<Cell>(Cell::Type::QUAD, std::vector<size_t>{0, 1, 3, 4}));
 
-            // Punkte erstellen
-            points.push_back(Point3(0, 0, 0));                        // Punkt 0
-            points.push_back(Point3(gridSize, 0, 0));                 // Punkt 1
-            points.push_back(Point3(0, gridSize, 0));                 // Punkt 2
-            points.push_back(Point3(0, 0, gridSize));                 // Punkt 3
-            points.push_back(Point3(gridSize, gridSize, gridSize));   // Punkt 4
+            // 3. Zellanzahl und Zelltypen
+            size_t numCellTypes = 4;
+            std::pair<Cell::Type, size_t> cellCounts[] = {
+                {Cell::Type::TRIANGLE, 1},
+                {Cell::Type::TETRAHEDRON, 1},
+                {Cell::Type::PRISM, 1},
+                {Cell::Type::QUAD, 1}
+            };
 
-            // Zelltypen definieren
-            cells.push_back({0, 1});                                  // Kante (EDGE)
-            cellTypes.push_back(Cell::Type::EDGE);
-
-            cells.push_back({0, 1, 2});                               // Dreieck (TRIANGLE)
-            cellTypes.push_back(Cell::Type::TRIANGLE);
-
-            cells.push_back({0, 1, 2, 3});                            // Tetraeder (TETRAHEDRON)
-            cellTypes.push_back(Cell::Type::TETRAHEDRON);
-
-            // Gitter erstellen
-            auto grid = DomainFactory::makeGrid(points, cells, cellTypes, nullptr);
-
-            // Visualisierung vorbereiten
-            std::shared_ptr< const Grid< 3 > > grid3D = grid;
-            const ValueArray< Point3 >& gridPoints = grid3D->points();
-
-            // Punkte in das Visualisierungssystem einfügen
-            std::vector< VectorF< 3 > > vertices;
-            for (size_t i = 0; i < gridPoints.size(); ++i) {
-                vertices.push_back(VectorF< 3 >(gridPoints[i]));
+            // 4. Indices für die Punkte generieren
+            std::vector<size_t> indices;
+            for (const auto& cell : cells) {
+                for (size_t i = 0; i < cell->numVertices(); ++i) {
+                    indices.push_back(cell->index(i));
+                }
             }
 
-            auto const& system = graphics::GraphicsSystem::instance();
-            auto glyphs = system.makePrimitive(
-                graphics::PrimitiveConfig{ graphics::RenderPrimitives::POINTS }
-                    .vertexBuffer("in_vertex", system.makeBuffer(vertices))
-                    .uniform("u_color", Color(0.75, 0.75, 0.0))
-                    .uniform("u_pointSize", 5.0f)
-            );
+            // 5. Gitter mit der DomainFactory erstellen
+            auto grid = DomainFactory::makeGrid(points, numCellTypes, cellCounts, indices);
 
-            setGraphics("Grid", glyphs);
+            // 6. Ergebnis speichern
+            setResult("Grid", grid);
         }
     };
 
-    AlgorithmRegister<UnstructuredGridAlgorithm> registerGenerateGridData("Grundaufgaben/1.2_GenerateUnstructuredGridData", "Erzeugt unstrukturiertes Gitter 1.2");
 
-} // namespace
+    AlgorithmRegister<GenerateUnstructuredGrid> reg("Grundaufgaben/1.2 Generate Unstructured Grid", "Erzeugt ein unstrukturiertes Gitter mit mehreren Zelltypen.");
+}
 
-#endif
+ #endif
+
+
+#include <fantom/algorithm.hpp>
+#include <fantom/dataset.hpp>
+#include <fantom/register.hpp>
+
+using namespace fantom;
+
+namespace
+    {
+
+    class Gitter2 : public DataAlgorithm
+    {
+
+    public:
+        struct Options : public DataAlgorithm::Options
+        {
+            Options( fantom::Options::Control& control )
+                : DataAlgorithm::Options( control )
+            {
+                /*
+                nx, ny, nz beschreiben die Ausdehnung des Grids in die drei Raumrichtungen x,y,z
+                dx, dy, dz beschreiben den Abstand zwischen den Gitterpunkten auf den Koordinatenachsen
+                */
+                add< long >( "nx", "", 10 );
+                add< long >( "ny", "", 10 );
+                add< long >( "nz", "", 10 );
+
+                addSeparator();
+                add< double >( "dx", "", 1.0 );
+                add< double >( "dy", "", 1.0 );
+                add< double >( "dz", "", 1.0 );
+            }
+        };
+
+        struct DataOutputs : public DataAlgorithm::DataOutputs
+        {
+            DataOutputs( fantom::DataOutputs::Control& control )
+                : DataAlgorithm::DataOutputs( control)
+            {
+                //Ein Grid wird als DataOutput definiert
+                add< const Grid< 3 > >( "grid" );
+            }
+        };
+
+
+        Gitter2( InitData& data )
+            : DataAlgorithm( data )
+        {
+        }
+
+        virtual void execute( const Algorithm::Options& options, const volatile bool& /*abortFlag*/ ) override
+        {
+            //Das Array gibt an, aus welchen Punkten im Raum das Grid gebildet wird.
+            const std::vector<fantom::Point3> points = {
+                {0, 0, 0},  // 0
+                {1, 0, 0},  // 1
+                {0, 1, 0},  // 2
+                {1, 1, 0},  // 3
+                {0, 0, 1},  // 4
+                {1, 0, 1},  // 5
+                {0, 1, 1},  // 6
+                {1, 1, 1},  //7
+                {0.5, 0.5, -1},  //8
+                {0, 1, 2} //9
+            };
+            //Diese Zahl gibt an, wie viele verschiedene Typen von Zellen es im Grid gibt.
+            size_t numCellTypes = 3;
+
+            //Dieses Array von Paaren definiert, welche Zelltypen es im konkreten gibt und in welcher Anzahl sie vorkommen.
+            const std::pair< Cell::Type, size_t >    cellCounts[] = {
+                {Cell::HEXAHEDRON, 1}, //ein Würfel
+                {Cell::TETRAHEDRON, 1}, //ein Tetraeder
+                {Cell::PYRAMID, 1} //eine Pyramide
+            };
+
+            //Mittels der Indizes der Punkte aus dem points-Array wird nun ein Vektor von Indizes bestimmt, der den Zellen Punkte im Raum zuordnet.
+            std::vector<size_t> indices = {
+                0, 1, 5, 4, 6, 7, 3, 2,   // Wuerfel
+                4, 5, 6, 9,    // Tetraeder
+                0, 1, 3, 2, 8 // Pyramide
+            };
+
+            std::shared_ptr<const Grid<3>> grid = DomainFactory::makeGrid<3>(points, numCellTypes, cellCounts, indices);
+
+            setResult("grid", grid);
+        }
+    };
+    AlgorithmRegister< Gitter2 > dummy1( "Grundaufgaben/A1T2", "Generierung eines 3D Grids mit selbst definierten Zellen." );
+}

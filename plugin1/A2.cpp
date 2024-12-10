@@ -62,6 +62,9 @@ Wissen:
 #include <fantom/cells.hpp>
 #include <vector>
 
+#include <fantom-plugins/utils/Graphics/HelperFunctions.hpp>
+#include <fantom-plugins/utils/Graphics/ObjectRenderer.hpp>
+
 using namespace fantom;
 
 namespace { // nur in dieser Datei sichtbare Klassen
@@ -70,10 +73,10 @@ namespace { // nur in dieser Datei sichtbare Klassen
         struct Options : public VisAlgorithm::Options {
             Options(fantom::Options::Control& control)
                 : VisAlgorithm::Options(control) {
-                add<Grid<3>>("Grid", "anzuzeigendes Grid"); // 3D-Gitter, das visualisiert werden soll
+                add<PointSetBase>("Grid", "anzuzeigendes Grid"); // 3D-Gitter, das visualisiert werden soll
                 add<Color>("Color", "Farbe für die Gitterlinien oder -flächen", Color(0.0, 1.0, 0.0));
                 add<int>("Cell Index", "Index der anzuzeigenden Zelle (-1 für alle Zellen)", -1); // Index spezifischer Zelle, die visualisiert werden soll; -1 heißt alle Zellen anzeigen
-                //add<std::string>("Display Mode", "Wähle 'Lines' für Gitterlinien oder 'Faces' für Zellenflächen", "Lines"); // Darstellungs-Modus: Gitterlinien oder Flächen der Zellen
+                add<std::string>("Display Mode", "Wähle 'Lines' für Gitterlinien oder 'Faces' für Zellenflächen", "Lines"); // Darstellungs-Modus: Gitterlinien oder Flächen der Zellen
             }
         };
 
@@ -88,16 +91,18 @@ namespace { // nur in dieser Datei sichtbare Klassen
             : VisAlgorithm(data) {}
 
         virtual void execute(const Algorithm::Options& options, const volatile bool& /*abortFlag*/) override {
-            auto grid = options.get<std::shared_ptr<const Grid<3>>>("Grid"); // Auswahl des Gitters  wird ausgelesen // auto grid = options.get<std::shared_ptr<const Grid<3>>>("Grid"); // Auswahl der Eigenschaften wird ausgelesen
-            if (!grid) { // Prüfen der Gitterdaten -> wenn kein Gitter übergeben, dann Abbruch
+            auto base = options.get<const PointSetBase>("Grid"); // Auswahl des Gitters  wird ausgelesen // auto grid = options.get<std::shared_ptr<const Grid<3>>>("Grid"); // Auswahl der Eigenschaften wird ausgelesen
+
+            if (!base) { // Prüfen der Gitterdaten -> wenn kein Gitter übergeben, dann Abbruch
                 debugLog() << "Kein gültiges Gitter bereitgestellt" << std::endl;
                 return;
             }
-
+            std::cout << "base valid" << std::endl;
+            auto grid = std::dynamic_pointer_cast<const Grid<3>>(base);
             auto color = options.get<Color>("Color");
             int cellIndex = options.get<int>("Cell Index");
-            std::string displayMode="Faces"; // = options.get<std::string>("Display Mode");
-
+            std::string displayMode = options.get<std::string>("Display Mode");
+            std::cout << __LINE__ << std::endl;
             std::vector<VectorF<3>> vertices; // Initialisierung Eckpunkte des Gitters
             std::vector<unsigned int> indices; // Initialisierung Reihenfolge der Eckpunkte, um Linien oder Flächen zu bilden
 
@@ -136,26 +141,32 @@ namespace { // nur in dieser Datei sichtbare Klassen
                 return;
             }
 
-            auto& system = graphics::GraphicsSystem::instance(); // Zugriff auf grafische Subsystem für GPU-Rendering
+            auto const& system = graphics::GraphicsSystem::instance(); // Zugriff auf grafische Subsystem für GPU-Rendering
             std::string resourcePath = PluginRegistrationService::getInstance().getResourcePath("utils/Graphics"); // Pfad zu shader-Dateien
 
             // Manuelle Berechnung der Bounding Sphere
-            auto boundingSphere = calculateBoundingSphere(vertices); //nimmt Liste der Vertices und berechnet Sphere, die alle Punkte umschließt
-
+            //auto boundingSphere = calculateBoundingSphere(vertices); //nimmt Liste der Vertices und berechnet Sphere, die alle Punkte umschließt
+            auto boundingSphere = graphics::computeBoundingSphere( vertices );
             // Erstellen des Drawables
             std::shared_ptr<graphics::Drawable> drawable = system.makePrimitive( // Drawable-Objekt repräsentiert renderbares Objekt in der Szene
-                graphics::PrimitiveConfig{ displayMode == "Lines" ? graphics::RenderPrimitives::LINES : graphics::RenderPrimitives::TRIANGLES } //Renderung der Primitivtyp: Linien und Dreiecke (3D) ->unterschiedliche Darstellungen desselben Modells möglich
+                graphics::PrimitiveConfig{ displayMode == "Lines" ? graphics::RenderPrimitives::LINES : graphics::RenderPrimitives::TRIANGLES } // LINES und TRIANGLES teilen Renderung der Primitivtyp: Linien und Dreiecke (3D) ->unterschiedliche Darstellungen desselben Modells möglich
                     .vertexBuffer("in_vertex", system.makeBuffer(vertices)) // in_vertex als Eingangsparameter für den Vertex Shader -> greift auf Vertex-Daten zu, um Transformationen und Berechnungen durchzuführen
+                    .indexBuffer( system.makeIndexBuffer( indices ) )
                     .uniform("u_color", color) // Wert der bei Draw-Aufruf gleich bleibt (hier Farbe (color) an Shader übergeben)
                     .boundingSphere(boundingSphere), // Bounding Sphere wird Drawable-Objekt hinzugefügt (Sichtbarkeitsprüfungen)
+
                 system.makeProgramFromFiles( // Shader-Programm
                     resourcePath + "shader/line/noShading/singleColor/vertex.glsl",   // Vertex Shader: definiert, wie Eckpunkte transformiert werden (wie Projektion von 3D in 2D)
-                    resourcePath + "shader/line/noShading/singleColor/fragment.glsl", // Fragment Shader: bestimmt  Farbe jedes Pixels
-                    resourcePath + "shader/line/noShading/singleColor/geometry.glsl") // Geometry Shader: verarbeitet primitive Formen (Linien und Dreiecke) und kann neue Geometrien generieren
+                    resourcePath + "shader/line/noShading/singleColor/fragment.glsl") // Fragment Shader: bestimmt  Farbe jedes Pixels
+                    //resourcePath + "shader/line/noShading/singleColor/geometry.glsl") // Geometry Shader: verarbeitet primitive Formen (Linien und Dreiecke) und kann neue Geometrien generieren
+                                                                                 // TODO Erstmal für Lines
             );
-
+            auto testObjectRenderer = std::make_shared< graphics::ObjectRenderer >( system );
+            std::cout << "Drawable finished" << std::endl;
             // Drawable als Ausgabe setzen
-            setGraphics("Grid Visualization", drawable); // Hinzufügen der erstellten Grafik in Szene
+            //setGraphics("Grid Visualization", drawable); // Hinzufügen der erstellten Grafik in Szene
+            setGraphics("Grid Visualization",
+                                     graphics::makeCompound( { drawable, testObjectRenderer->commit() } ) );
         }
 
     private:
@@ -215,4 +226,197 @@ namespace { // nur in dieser Datei sichtbare Klassen
 } // namespace
 
 
-// #endif
+#if 0
+
+#include <fantom/algorithm.hpp>
+#include <fantom/dataset.hpp>
+#include <fantom/register.hpp>
+#include <math.h>
+
+#include <fantom-plugins/utils/Graphics/HelperFunctions.hpp>
+#include <fantom-plugins/utils/Graphics/ObjectRenderer.hpp>
+
+#include <stdexcept>
+#include <vector>
+
+using namespace fantom;
+
+namespace
+{
+
+    class GridVis : public VisAlgorithm
+    {
+
+    public:
+        struct Options : public VisAlgorithm::Options
+        {
+            Options( fantom::Options::Control& control )
+                : VisAlgorithm::Options( control )
+            {
+                add< Color >( "Color", "Farbe der Ausgabe.", Color( 0.75, 0.75, 0.0 ) );
+                add< bool >( "True/False", "True wenn die Seitenflächen, False wenn die Linien des Grids gezeichnet werden sollen.", true);
+                add< Grid< 3 > >("Grid", "Das Input-Grid (3D).");
+                add < int >("Cell_Index","Index der zu visualisierenden Zelle. Bei -1 wird das gesamte Grid gezeichnet", -1);
+            }
+        };
+
+        struct VisOutputs : public VisAlgorithm::VisOutputs
+        {
+            VisOutputs( fantom::VisOutputs::Control& control )
+                : VisAlgorithm::VisOutputs( control )
+            {
+                addGraphics( "Grid" );
+            }
+        };
+
+        GridVis( InitData& data )
+            : VisAlgorithm( data )
+        {
+        }
+
+        //draw ist eine rekursive Funktion, die für das darstellen des grids verantwortlich ist
+        virtual void draw( const Cell& zelle , const ValueArray< Point3 >& points, const Color color, const std::string resourcePath, const graphics::GraphicsSystem& system, std::vector< std::shared_ptr< graphics::Drawable > >& drawables, const bool b){
+            //ist die Zelle ein Tetraeder, wird die Funktion rekursiv für alle Subzellen der Zelle aufgerufen
+            if(zelle.type()== Cell::Type(4)){
+                for(size_t i = 0; i < zelle.numFaces(); i++){
+                    draw(zelle.face(i),points,color,resourcePath,system,drawables,b);
+                }
+            //ist die Zelle ein Würfel, wird die Funktion rekursiv für alle Subzellen der Zelle aufgerufen
+            }else if(zelle.type()== Cell::Type(7)){
+                for(size_t i = 0; i < zelle.numFaces(); i++){
+                    draw(zelle.face(i),points,color,resourcePath,system,drawables,b);
+                }
+            //ist die Zelle eine Pyramide, wird die Funktion rekursiv für alle Subzellen der Zelle aufgerufen
+            }else if(zelle.type()== Cell::Type(5)){
+                for(size_t i = 0; i < zelle.numFaces(); i++){
+                    draw(zelle.face(i),points,color,resourcePath,system,drawables,b);
+                }
+            //ist die Zelle ein Dreieck, so haben wir einen Zelltypen der gezeichnet werden kann, wenn der Input-Parameter "True/False" auf True gesetzt ist.
+            }else if(zelle.type()== Cell::Type(2)){
+                //ist "True/False" auf True, so zeichnen wir das Dreieck (wird gebraucht, um die Seitenflächen zu visualisieren)
+                if(b){
+                    //Erst werden alle Eckpunkte des Dreiecks extrahiert
+                    std::vector< PointF< 3 > > tri( 3 );
+                    tri[0] = PointF< 3 >(points[zelle.index(0)]);
+                    tri[1] = PointF< 3 >(points[zelle.index(1)]);
+                    tri[2] = PointF< 3 >(points[zelle.index(2)]);
+
+                    //Es wird eine Bounding Sphere bestimmt, in der alle der drei Punkte liegen
+                    auto bs = graphics::computeBoundingSphere(tri);
+
+                    //anschließend wird das Dreieck als Primitive in drawables gespeichert
+                    drawables.push_back(system.makePrimitive(
+                        graphics::PrimitiveConfig{ graphics::RenderPrimitives::TRIANGLES }
+                        .vertexBuffer( "position", system.makeBuffer(tri) )
+                        .uniform( "color", color )
+                        .boundingSphere( bs ),
+                    system.makeProgramFromFiles( resourcePath + "shader/surface/noShading/singleColor/vertex.glsl",
+                                                 resourcePath + "shader/surface/noShading/singleColor/fragment.glsl" ) ));
+                // ist "True/False" auf False, so wird die Funktion für alle Subzellen des Dreiecks aufgerufen
+                }else if(!b){
+                    for(size_t i = 0; i < zelle.numFaces(); i++){
+                        draw(zelle.face(i),points,color,resourcePath,system,drawables,b);
+                    }
+                }
+            //ist die Zelle ein Viereck, so haben wir einen Zelltypen der gezeichnet werden kann, wenn der Input-Parameter "True/False" auf True gesetzt ist.
+            }else if(zelle.type()== fantom::Cell::Type(3)){
+                //ist "True/False" auf True, so zeichnen wir das Viereck (es wird hierzu in 2 Dreiecke aufgeteilt, die im Anschluss gezeichnet werden)
+                if(b){
+                    //Das erste Dreieck wird extrahiert
+                    std::vector< PointF< 3 > > tri1( 3 );
+                    tri1[0] = PointF< 3 >(points[zelle.index(0)]);
+                    tri1[1] = PointF< 3 >(points[zelle.index(1)]);
+                    tri1[2] = PointF< 3 >(points[zelle.index(2)]);
+
+                    //Das zweite Dreiecas Dreieckk wird extrahiert
+                    std::vector< PointF< 3 > > tri2( 3 );
+                    tri2[0] = PointF< 3 >(points[zelle.index(0)]);
+                    tri2[1] = PointF< 3 >(points[zelle.index(2)]);
+                    tri2[2] = PointF< 3 >(points[zelle.index(3)]);
+
+                    //Beide dreiecke werden in einem gemeinsamen Vektor gespeichert
+                    std::vector< PointF< 3 > > x[2];
+                    x[0] = tri1;
+                    x[1] = tri2;
+
+                    for(int i = 0; i < 2; i++){
+                        //Es wird eine Bounding Sphere bestimmt, in der alle der drei Punkte liegen
+                        auto bs = graphics::computeBoundingSphere(x[i]);
+
+                        //anschließend wird das Dreieck als Primitive in drawables gespeichert
+                        drawables.push_back(system.makePrimitive(
+                            graphics::PrimitiveConfig{ graphics::RenderPrimitives::TRIANGLES }
+                            .vertexBuffer( "position", system.makeBuffer(x[i]) )
+                            .uniform( "color", color )
+                            .boundingSphere( bs ),
+                        system.makeProgramFromFiles( resourcePath + "shader/surface/noShading/singleColor/vertex.glsl",
+                                                     resourcePath + "shader/surface/noShading/singleColor/fragment.glsl" ) ));
+                    }
+
+                // ist "True/False" auf False, so wird die Funktion für alle Subzellen des Dreiecks aufgerufen
+                }else if(!b){
+                    for(size_t i = 0; i < zelle.numFaces(); i++){
+                        draw(zelle.face(i),points,color,resourcePath,system,drawables,b);
+                    }
+                }
+            //Dieser Fall, der Fall das eine Zelle eine Linie ist, tritt nur in dem Fall ein, dass "True/False" auf False ist
+            }else if(zelle.type()== fantom::Cell::Type(1)){
+                //das if stellt sicher, dass hier auch kein Fehler auftritt
+                if(!b){
+                    //auch hier werden die beiden Endpunkte der Linie extrahiert
+                    std::vector< PointF< 3 > > p(2);
+                    p[0] = PointF< 3 >(points[zelle.index(0)]);
+                    p[1] = PointF< 3 >(points[zelle.index(1)]);
+
+                    //Es wird eine Bounding Sphere bestimmt, in der die zwei Punkte liegen
+                    auto bs = graphics::computeBoundingSphere(p);
+
+                    //anschließend wird die Linie als Primitive in drawables gespeichert
+                    drawables.push_back(system.makePrimitive(
+                        graphics::PrimitiveConfig{ graphics::RenderPrimitives::LINES }
+                        .vertexBuffer( "position", system.makeBuffer(p) )
+                        .uniform( "color", color )
+                        .boundingSphere( bs ),
+                    system.makeProgramFromFiles( resourcePath + "shader/surface/noShading/singleColor/vertex.glsl",
+                                                 resourcePath + "shader/surface/noShading/singleColor/fragment.glsl" ) ));
+                }
+            }
+        }
+
+        virtual void execute( const Algorithm::Options& options, const volatile bool& abortFlag) override
+        {
+            /*
+            Hier werden die Input-Parameter in Parametern color, b, c und grid gespeichert
+            */
+            Color color = options.get< Color >("Color");
+            bool b = options.get< bool >("True/False");
+            int c = options.get<int>("Cell_Index");
+            std::shared_ptr< const Grid< 3 > > g = options.get<Grid<3>>("Grid");
+            const ValueArray< Point3 >& points = g->points();
+
+            //Eine Instanz von GraphicsSystem wird erstellt, um drawables später grafisch ausgeben zu können
+            auto const& system = graphics::GraphicsSystem::instance();
+            //Das ist der Dateipfad, in dem die Tools zu finden sind, mit welchen man die Primitives visualisieren kann
+            std::string resourcePath = PluginRegistrationService::getInstance().getResourcePath( "utils/Graphics" );
+
+            std::vector< std::shared_ptr< graphics::Drawable > > drawables;
+
+            //Hier findet die Abfrage statt, ob man das ganze Grid oder nur einen einzelnen Index visualisieren möchte
+            if(c==-1){
+                for(size_t i = 0; i < g->numCells();i++){
+                    draw(g->cell(i),points,color, resourcePath, system, drawables,b);
+                }
+            }else if(c>=g->numCells()||c < -1){
+                debugLog() << "Der angegebene Zell-Index existiert nicht." << std::endl;
+                return;
+            }else{
+                draw(g->cell(c),points,color, resourcePath, system, drawables,b);
+            }
+
+            setGraphics("Grid", graphics::makeCompound( drawables ));
+        }
+    };
+    AlgorithmRegister< GridVis > dummy("Grundaufgaben/A2", "Visualisierungsalgorithmus für ein gegebenes Gitter.");
+}
+
+#endif
